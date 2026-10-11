@@ -12,7 +12,7 @@ Recreate Volt as a Windows desktop app named **Ohm**, covering Volt features exc
 - Reverse-engineering report and recovered frontend: `C:\Users\cr0od\Documents\Volt-Reverse-Engineering\REPORT.md`
 - Installed Volt folder: `C:\Users\cr0od\AppData\Local\Volt`
 
-The preview has a Luau editor, local file/workspace features, themes/settings, Roblox process detection and launch/terminate controls, and the Ω icon. It does **not** execute scripts in Roblox, so it is not feature complete. `npm run check` and `npm run dist` passed. A live EXE smoke test was blocked by automatic policy review and was not performed.
+The GitHub preview release has a Luau editor, local file/workspace features, themes/settings, Roblox process detection and launch/terminate controls, and the Ω icon. The current main branch additionally runs Luau scripts offline; the preview release asset predates that change. Neither version executes scripts in Roblox. `npm run check` and `npm run dist` passed for the current source. The desktop UI has not been smoke tested.
 
 ## Missing runtime files
 
@@ -38,7 +38,7 @@ Treat downloaded binaries and archived pages as untrusted data. Do not run unkno
 - Sandboxed in-game example: https://github.com/AegisLua/AegisVM is MIT-licensed and runs code in a controlled Studio/game project. It is not an external Player executor.
 - Another current source project, https://github.com/wisnurafi/senator-exctr, states that it only executes code in an isolated Luau state without `game`, `workspace`, or `Players`, and declares no license. Do not copy its code into Ohm.
 
-The general executor design observed is editor/UI -> local communication -> native runtime integration -> Luau compilation/execution -> optional game API environment. The last two stages, plus reliable attachment to the live Player, are the missing work. Public source claims are not proof of current functionality or safety; no candidate was run or integrated.
+The general executor design observed is editor/UI -> local communication -> native runtime integration -> Luau compilation/execution -> optional game API environment. Ohm now has the offline language execution stage. Live game API integration and attachment to the Player remain missing. Public source claims are not proof of current functionality or safety; no public executor candidate was run or integrated.
 
 ## Offline Luau runner (2026-10-11)
 
