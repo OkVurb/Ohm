@@ -9,7 +9,7 @@ const app = document.querySelector('#app');
 app.innerHTML = `
   <div class="shell">
     <header class="titlebar"><div class="brand"><span class="brandmark">Ω</span><strong>Ohm</strong><small>WORKSPACE</small></div>
-      <div class="toolbar"><button id="new" title="New script (Ctrl+N)">New</button><button id="open" title="Open files (Ctrl+O)">Open</button><button id="save" title="Save (Ctrl+S)">Save</button><span class="divider"></span><button id="run" class="primary" title="Roblox execution needs an authorized bridge">▶ Run</button></div>
+      <div class="toolbar"><button id="new" title="New script (Ctrl+N)">New</button><button id="open" title="Open files (Ctrl+O)">Open</button><button id="save" title="Save (Ctrl+S)">Save</button><span class="divider"></span><button id="run" class="primary" title="Run locally in Luau, without Roblox APIs">▶ Run offline</button></div>
       <div class="title-actions"><button id="settingsButton" title="Settings">⚙</button></div>
     </header>
     <div class="body">
@@ -240,7 +240,19 @@ function bind() {
   $('#new').onclick = $('#welcomeNew').onclick = () => addTab(null);
   $('#open').onclick = $('#welcomeOpen').onclick = openFiles;
   $('#save').onclick = saveActive;
-  $('#run').onclick = () => log('Roblox script execution is unavailable: no compatible execution bridge is installed.', 'error');
+  $('#run').onclick = async () => {
+    const tab = state.tabs.find(item => item.id === state.active);
+    if (!tab) return log('Open a script first', 'error');
+    $('#run').disabled = true;
+    log('Running locally in Luau. Roblox APIs are unavailable.');
+    try {
+      const result = await window.ohm.runOffline(tab.model.getValue());
+      if (result.stdout) log(result.stdout.trimEnd());
+      if (result.stderr) log(result.stderr.trimEnd(), 'error');
+      else if (result.ok) log('Finished.');
+    } catch (error) { showError(error); }
+    finally { $('#run').disabled = false; }
+  };
   $('#clearOutput').onclick = () => $('#messages').replaceChildren();
   $('#sidebarAction').onclick = renderSidebar;
   for (const button of document.querySelectorAll('.rail button')) button.onclick = () => {

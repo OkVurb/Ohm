@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('ohm', {
   getSettings: () => ipcRenderer.invoke('ohm:get-settings'),
   setSettings: patch => ipcRenderer.invoke('ohm:set-settings', patch),
   listAutoexec: () => ipcRenderer.invoke('ohm:list-autoexec'),
+  runOffline: source => ipcRenderer.invoke('ohm:run-offline', source),
   saveAutoexec: (name, content) => ipcRenderer.invoke('ohm:save-autoexec', name, content),
   deleteAutoexec: name => ipcRenderer.invoke('ohm:delete-autoexec', name),
   listRoblox: () => ipcRenderer.invoke('ohm:list-roblox'),

@@ -5,6 +5,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { defaults, cleanSettings, autoexecName, inside } = require('./core.cjs');
+const { runOffline } = require('./offline.cjs');
 
 const exec = promisify(execFile);
 const maxScriptBytes = 2 * 1024 * 1024;
@@ -141,6 +142,12 @@ app.whenReady().then(async () => {
     return settings;
   });
   handle('list-autoexec', async () => (await fsp.readdir(path.join(root, 'autoexec'))).filter(name => /\.lua$/i.test(name)));
+  handle('run-offline', async source => {
+    const executable = app.isPackaged
+      ? path.join(process.resourcesPath, 'luau', 'luau.exe')
+      : path.join(__dirname, '..', 'vendor', 'luau', 'luau.exe');
+    return runOffline(checkedText(source), executable);
+  });
   handle('save-autoexec', async (name, content) => {
     await writeAtomic(path.join(root, 'autoexec', autoexecName(name)), checkedText(content));
     return name;
