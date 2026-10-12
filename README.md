@@ -1,3 +1,5 @@
+<img width="1254" height="1254" alt="ohm-icon" src="https://github.com/user-attachments/assets/e50f273b-2836-4ae0-8150-91c3bf17a351" />
+
 # Ohm
 
 Ohm is an independent Windows desktop workspace for Luau scripts. It has no account, subscription, license key, or hardware ID system.
