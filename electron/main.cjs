@@ -23,7 +23,6 @@ let recoveryError;
 const approvedFiles = new Set();
 let pendingFileSave = Promise.resolve();
 let pendingSettings = Promise.resolve();
-let pendingAutoexec = Promise.resolve();
 let pendingClose;
 let rendererReady = false;
 let closeApproved = false;
@@ -48,9 +47,11 @@ async function saveRecovery(value) {
   return true;
 }
 
-function autoexecOperation(operation) {
-  const next = pendingAutoexec.catch(() => {}).then(operation);
-  pendingAutoexec = next;
+function fileOperation(operation) {
+  // Queue mutations before async validation so saves, replacements and deletes
+  // retain IPC submission order, including operations on the same autoexec file.
+  const next = pendingFileSave.catch(() => {}).then(operation);
+  pendingFileSave = next;
   return next;
 }
 
@@ -177,7 +178,7 @@ app.whenReady().then(async () => {
     closeApproved = false;
     pendingClose = (async () => {
       if (!snapshot || !Array.isArray(snapshot.drafts)) throw new TypeError('Invalid close request');
-      await Promise.allSettled([pendingFileSave, pendingSettings, pendingAutoexec]);
+      await Promise.allSettled([pendingFileSave, pendingSettings]);
       let next = emptyRecovery();
       if (snapshot.drafts.length) {
         const { response } = await dialog.showMessageBox(win, {
@@ -218,22 +219,19 @@ app.whenReady().then(async () => {
     return files;
   });
   handle('read-file', async file => readScript(await checkedFile(file)));
-  handle('save-file', (file, content) => {
-    // Queue before asynchronous path checks, which can otherwise reorder requests.
-    const save = pendingFileSave.catch(() => {}).then(async () => {
-      await writeAtomic(await checkedFile(file, true), checkedText(content));
-      return file;
-    });
-    pendingFileSave = save;
-    return save;
-  });
+  handle('save-file', (file, content) => fileOperation(async () => {
+    await writeAtomic(await checkedFile(file, true), checkedText(content));
+    return file;
+  }));
   handle('save-as', async (name, content) => {
     const result = await dialog.showSaveDialog(win, { defaultPath: path.join(workspace, path.basename(String(name || 'script.lua'))), filters: [{ name: 'Luau', extensions: ['lua', 'luau'] }, { name: 'Text', extensions: ['txt', 'json', 'md'] }] });
     if (result.canceled || !result.filePath) return null;
-    const file = path.resolve(result.filePath);
-    approvedFiles.add(file);
-    await writeAtomic(await checkedFile(file, true), checkedText(content));
-    return file;
+    return fileOperation(async () => {
+      const file = path.resolve(result.filePath);
+      approvedFiles.add(file);
+      await writeAtomic(await checkedFile(file, true), checkedText(content));
+      return file;
+    });
   });
   handle('list-workspace', async () => listTree(workspace));
   handle('choose-workspace', async () => {
@@ -264,7 +262,7 @@ app.whenReady().then(async () => {
       : path.join(__dirname, '..', 'vendor', 'luau', 'luau.exe');
     return runOffline(checkedText(source), executable);
   });
-  handle('save-autoexec', (name, content) => autoexecOperation(async () => {
+  handle('save-autoexec', (name, content) => fileOperation(async () => {
     checkedText(content);
     const { file, exists } = await autoexecFile(name, true);
     if (exists) {
@@ -277,7 +275,7 @@ app.whenReady().then(async () => {
     await writeAtomic(file, content);
     return name;
   }));
-  handle('delete-autoexec', name => autoexecOperation(async () => {
+  handle('delete-autoexec', name => fileOperation(async () => {
     await fsp.unlink((await autoexecFile(name)).file);
     return true;
   }));

@@ -7,7 +7,7 @@ export function snapshotDrafts(tabs, activeId) {
   return { version: 1, drafts, activeId: drafts.some(tab => tab.id === activeId) ? activeId : null };
 }
 
-export function createDraftRecovery({ snapshot, save, onSaved = () => {}, onError = () => {}, delay = 500 }) {
+export function createDraftRecovery({ snapshot, save, onSaved = () => {}, onError = () => {}, delay = 500, retryDelay = 2000 }) {
   let timer;
   let writing;
   let changed = false;
@@ -21,7 +21,11 @@ export function createDraftRecovery({ snapshot, save, onSaved = () => {}, onErro
     changed = false;
     writing = Promise.resolve().then(() => save(snapshot()));
     try { await writing; onSaved(); }
-    catch (error) { changed = true; throw error; }
+    catch (error) {
+      changed = true;
+      if (!paused && !timer) timer = setTimeout(() => flush().catch(onError), retryDelay);
+      throw error;
+    }
     finally { writing = null; }
     if (changed && !paused) await flush();
   }

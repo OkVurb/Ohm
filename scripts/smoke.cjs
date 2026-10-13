@@ -177,6 +177,18 @@ async function replaceEditor(app, text) {
     await app.wait("!document.querySelector('.tab.active').textContent.includes('●')");
     const autoexecFile = path.join(profile, 'autoexec', 'smoke.luau');
     assert.equal(await fs.readFile(autoexecFile, 'utf8'), 'print(84)');
+    // Replacing an already-open clean script updates its model before reopening.
+    await ui("document.querySelectorAll('.tab')[0].click(); document.querySelector('#sidebarBody .side-primary').click(); document.querySelector('#autoexecName').value = 'smoke.luau'");
+    await app.main.evaluate('globalThis.__ohmSmokeResponse = 1');
+    await ui("document.querySelector('#saveAutoexec').click()");
+    await app.wait("!document.querySelector('#autoexecDialog').open");
+    await ui("document.querySelector('.autoexec-open').click()");
+    await app.wait("/6\\s*\\*\\s*7/.test(document.querySelector('#editor .view-lines').innerText)");
+    assert.equal(await ui("document.querySelector('.tab.active').textContent.includes('●')"), false);
+    assert.equal(await fs.readFile(autoexecFile, 'utf8'), 'print(6 * 7)');
+    await replaceEditor(app, 'print(84)');
+    await ui("document.querySelector('#save').click()");
+    await app.wait("!document.querySelector('.tab.active').textContent.includes('●')");
     await replaceEditor(app, 'print(126)');
     await app.wait("document.querySelector('#recoveryStatus').textContent === 'Drafts saved locally'");
     await waitFor(async () => {
@@ -245,12 +257,33 @@ async function replaceEditor(app, text) {
     stage = 'reopen after discard';
     app = await launch(profile, 4, exceptions);
     assert.equal(await ui("document.querySelectorAll('.tab').length"), 0);
+    stage = 'preserve dirty tab on autoexec replacement';
+    await ui("document.querySelector('[data-view=autoexec]').click()");
+    await app.wait("document.querySelector('.autoexec-open') !== null");
+    await ui("document.querySelector('.autoexec-open').click()");
+    await app.wait("document.querySelectorAll('.tab').length === 1");
+    await replaceEditor(app, 'print(999)');
+    await ui("document.querySelector('#new').click()");
+    await app.renderer.call('Input.insertText', { text: 'print(42)' });
+    await ui("document.querySelector('#sidebarBody .side-primary').click(); document.querySelector('#autoexecName').value = 'smoke.luau'");
+    await app.main.evaluate('globalThis.__ohmSmokeResponse = 1');
+    await ui("document.querySelector('#saveAutoexec').click()");
+    await app.wait("!document.querySelector('#autoexecDialog').open");
+    assert.equal(await ui("document.querySelectorAll('.tab')[0].title"), 'Unsaved script');
+    await ui("document.querySelectorAll('.tab')[0].click()");
+    await app.wait("document.querySelector('#editor .view-lines').innerText.includes('999')");
+    assert.equal(await ui("document.querySelector('.tab.active').textContent.includes('●')"), true);
+    await ui("document.querySelector('.autoexec-open').click()");
+    await app.wait("document.querySelectorAll('.tab').length === 3");
+    await app.wait("document.querySelector('#editor .view-lines').innerText.includes('42')");
+    assert.equal(await fs.readFile(autoexecFile, 'utf8'), 'print(42)');
+    await app.main.evaluate('globalThis.__ohmSmokeResponse = 2');
     await app.requestClose();
     await app.exited();
     assert.deepEqual(exceptions, []);
     const result = {
       executable, profile, startup: 'passed', localOutput: 42, syntaxError: 'reported',
-      autoexecSaveOpenEdit: 'passed', reservedFilename: 'rejected', settingsSaveCancelRestart: 'passed',
+      autoexecSaveOpenEdit: 'passed', autoexecReplacementCleanDirty: 'passed', reservedFilename: 'rejected', settingsSaveCancelRestart: 'passed',
       latestSidebarWins: 'passed', concurrentSaves: 'passed', abruptExitRecovery: 'passed',
       recoveryLeavesOriginalUnchanged: 'passed', closeCancelKeepDiscard: 'passed',
       nativeDialogChoices: 'simulated only in the test process', rendererExceptions: exceptions.length

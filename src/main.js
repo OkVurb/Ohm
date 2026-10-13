@@ -2,7 +2,7 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import 'monaco-editor/languages/definitions/lua/register';
 import './style.css';
-import { saveTab, hasUnsavedWork } from './save.mjs';
+import { saveTab, hasUnsavedWork, refreshReplacedTabs } from './save.mjs';
 import { createDraftRecovery, snapshotDrafts } from './recovery.mjs';
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -346,6 +346,13 @@ function bind() {
     try {
       const name = await window.ohm.saveAutoexec($('#autoexecName').value, autoexecSource);
       if (name) {
+        const file = await window.ohm.readAutoexec(name);
+        const preserved = refreshReplacedTabs(state.tabs, file, window.ohm.platform);
+        for (const tab of preserved) log(`Kept unsaved edits to ${tab.name} in a separate tab. Save it to choose a destination.`);
+        renderTabs();
+        const active = state.tabs.find(tab => tab.id === state.active);
+        if (active) $('#statusLeft').textContent = active.path || 'Unsaved script';
+        draftRecovery.schedule();
         $('#autoexecDialog').close();
         log(`Saved autoexec/${name}`);
         renderSidebar();

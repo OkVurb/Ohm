@@ -58,6 +58,7 @@ async function bootApp(t, options = {}) {
   vm.runInNewContext(await fs.readFile(path.join(__dirname, 'main.cjs'), 'utf8'), {
     require(name) {
       if (name === 'electron') return electron;
+      if (name === 'node:fs/promises' && options.fs) return { ...fs, ...options.fs };
       if (name.startsWith('./')) {
         const resolved = localRequire.resolve(name);
         assert.ok(config.build.files.includes(`electron/${path.basename(resolved)}`), `${name} missing from package`);
@@ -199,5 +200,47 @@ test('autoexec supports save, open, cancel replacement and delete without accept
   await app.invoke('save-file', file.path, 'edited from tab');
   assert.equal((await app.invoke('read-autoexec', 'test.luau')).content, 'edited from tab');
   await app.invoke('delete-autoexec', 'test.luau');
+  assert.equal((await app.invoke('list-autoexec')).length, 0);
+});
+
+test('autoexec deletion waits for an earlier editor save even during path validation', async t => {
+  let blocked = false;
+  let release;
+  let started;
+  const waiting = new Promise(resolve => { started = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  const app = await bootApp(t, { fs: { async realpath(file) {
+    if (blocked) { started(); await gate; }
+    return fs.realpath(file);
+  } } });
+  await app.invoke('save-autoexec', 'ordered.lua', 'original');
+  const file = await app.invoke('read-autoexec', 'ordered.lua');
+  blocked = true;
+  const save = app.invoke('save-file', file.path, 'pending editor text');
+  await waiting;
+  let deleted = false;
+  const deletion = app.invoke('delete-autoexec', 'ordered.lua').then(() => { deleted = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(deleted, false, 'Deletion must not overtake the submitted save');
+  release();
+  await Promise.all([save, deletion]);
+  await assert.rejects(fs.access(file.path), { code: 'ENOENT' });
+  // A later intentional save can recreate the file, and queues recover after errors.
+  await assert.rejects(app.invoke('delete-autoexec', 'ordered.lua'), { code: 'ENOENT' });
+  await app.invoke('save-file', file.path, 'new intentional save');
+  assert.equal(await fs.readFile(file.path, 'utf8'), 'new intentional save');
+});
+
+test('legacy valid autoexec names remain listed, readable and deletable', async t => {
+  const app = await bootApp(t);
+  const names = ['_startup.lua', '-startup.lua', ' startup.lua'];
+  for (const name of names) await fs.writeFile(path.join(app.dir, 'autoexec', name), name);
+  const listed = await app.invoke('list-autoexec');
+  for (const name of names) {
+    assert.ok(listed.includes(name), name);
+    assert.equal((await app.invoke('read-autoexec', name)).content, name);
+    await app.invoke('delete-autoexec', name);
+  }
   assert.equal((await app.invoke('list-autoexec')).length, 0);
 });

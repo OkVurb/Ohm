@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { saveTab, hasUnsavedWork } from './save.mjs';
+import { saveTab, hasUnsavedWork, refreshReplacedTabs } from './save.mjs';
 
 function fixture() {
   let content = 'original';
@@ -52,4 +52,43 @@ test('window close guard covers dirty tabs and saves still in progress', () => {
   assert.equal(hasUnsavedWork([{ dirty: false }]), false);
   assert.equal(hasUnsavedWork([{ dirty: true }]), true);
   assert.equal(hasUnsavedWork([{ dirty: false, saving: Promise.resolve() }]), true);
+});
+
+test('replacing a file refreshes matching clean tabs without touching other tabs', () => {
+  let value = 'old';
+  const tab = { path: 'C:\\Autoexec\\A.lua', dirty: false, model: {
+    getValue: () => value,
+    setValue(next) { value = next; tab.dirty = true; }
+  } };
+  const other = { path: 'C:/Autoexec/b.lua', dirty: false };
+  assert.deepEqual(refreshReplacedTabs([tab, other], { path: 'c:/autoexec/a.lua', content: 'replacement' }, 'win32'), []);
+  assert.equal(value, 'replacement');
+  assert.equal(tab.dirty, false);
+  assert.equal(tab.path, 'C:\\Autoexec\\A.lua');
+  assert.equal(other.dirty, false);
+});
+
+test('replacement preserves dirty buffers and an older pending save cannot reattach them', async () => {
+  const { tab, edit } = fixture();
+  tab.path = 'C:/Autoexec/a.lua';
+  let finish;
+  const saving = saveTab(tab, { saveFile: () => new Promise(resolve => { finish = resolve; }) });
+  edit('unsaved edits');
+  const protectedTabs = refreshReplacedTabs([tab], { path: 'C:/Autoexec/a.lua', content: 'replacement' }, 'win32');
+  assert.deepEqual(protectedTabs, [tab]);
+  assert.equal(tab.model.getValue(), 'unsaved edits');
+  assert.equal(tab.path, null);
+  assert.equal(tab.name, 'a.lua');
+  finish('C:/Autoexec/a.lua');
+  await saving;
+  assert.equal(tab.path, null);
+  assert.equal(tab.dirty, true);
+  let saveAsCalled = false;
+  await saveTab(tab, { saveAs: async (name, content) => {
+    saveAsCalled = true;
+    assert.equal(content, 'unsaved edits');
+    return null;
+  } });
+  assert.equal(saveAsCalled, true);
+  assert.equal(tab.dirty, true);
 });

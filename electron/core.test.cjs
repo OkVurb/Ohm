@@ -8,7 +8,8 @@ assert.throws(() => cleanSettings({ fontSize: 100 }));
 assert.throws(() => cleanSettings({ unknown: true }));
 assert.equal(autoexecName('farm.lua'), 'farm.lua');
 assert.equal(autoexecName('my-script.luau'), 'my-script.luau');
-for (const name of ['CON.lua', 'com1.other.lua', 'LPT9 .lua', '.hidden.lua', ' bad.lua', 'a.lua.', 'x/y.lua', 'x\\y.lua']) {
+for (const name of ['_startup.lua', '-startup.lua', ' startup.lua']) assert.equal(autoexecName(name), name);
+for (const name of ['CON.lua', 'com1.other.lua', 'LPT9 .lua', '.hidden.lua', 'a.lua.', 'x/y.lua', 'x\\y.lua']) {
   assert.throws(() => autoexecName(name), undefined, name);
 }
 assert.throws(() => autoexecName('../escape.lua'));

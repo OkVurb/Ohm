@@ -73,3 +73,58 @@ test('pausing for close prevents queued snapshots from overwriting the close dec
   assert.deepEqual(writes, [0]);
   assert.equal(recovery.pending, true);
 });
+
+test('recovery retries failed checkpoints while idle using the latest buffer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let fail = true;
+  let text = 'first';
+  let attempts = 0;
+  const writes = [];
+  const recovery = createDraftRecovery({ retryDelay: 2000, snapshot: () => text, save: async value => {
+    attempts++;
+    if (fail) throw new Error('temporarily unwritable');
+    writes.push(value);
+  } });
+  t.after(() => recovery.pause());
+  recovery.schedule();
+  await assert.rejects(recovery.flush(), /temporarily unwritable/);
+  text = 'latest';
+  fail = false;
+  t.mock.timers.tick(1999);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(1);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(writes, ['latest']);
+  assert.equal(recovery.pending, false);
+});
+
+test('pausing cancels scheduled retries and failures settling during pause do not restart them', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0;
+  let rejectWrite;
+  const recovery = createDraftRecovery({ retryDelay: 2000, snapshot: () => 'draft', save: () => {
+    attempts++;
+    return new Promise((resolve, reject) => { rejectWrite = reject; });
+  } });
+  recovery.schedule();
+  const flush = recovery.flush();
+  await Promise.resolve();
+  rejectWrite(new Error('disk full'));
+  await assert.rejects(flush, /disk full/);
+  await recovery.pause();
+  t.mock.timers.tick(3000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  recovery.resume();
+  const second = recovery.flush();
+  await Promise.resolve();
+  const paused = recovery.pause();
+  rejectWrite(new Error('still full'));
+  await assert.rejects(second, /still full/);
+  await paused;
+  t.mock.timers.tick(3000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 2);
+  assert.equal(recovery.pending, true);
+});
