@@ -29,5 +29,3 @@ function inside(root, target) {
 }
 
 module.exports = { defaults, cleanSettings, autoexecName, inside };
-"module.exports = { injectDllToPid }" 
-"module.exports = { runOffline, injectDllToPid }" 

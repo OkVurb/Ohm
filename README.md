@@ -2,6 +2,10 @@
 
 # Ohm
 
+> Review snapshot (2026-10-13): current injector changes introduce startup
+> blockers. See [CODE_REVIEW.md](CODE_REVIEW.md). The capabilities and historical
+> 0.1.2 repair described below do not establish that this snapshot starts.
+
 Ohm is an independent Windows desktop workspace for Luau scripts. It has no account, subscription, license key, or hardware ID system.
 
 ## What works
@@ -31,3 +35,9 @@ npm run dist
 ```
 
 Build outputs are written to `release/`. `Ohm-Setup` is the installer and `Ohm-Portable` runs without installation. Local settings and the default workspace are stored under the app's user data folder.
+
+`npm run dist` runs the checks before packaging. Version 0.1.2 fixes the startup
+crash caused by exporting an undefined `runOffline` after the function was renamed.
+Use the newly built 0.1.2 files in `release/`; the older 0.1.1 executables in the
+repository root and an existing installation are not updated by building.
+This repair restores the local runner. It does not add live Roblox execution.

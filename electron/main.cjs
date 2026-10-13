@@ -6,6 +6,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { defaults, cleanSettings, autoexecName, inside } = require('./core.cjs');
 const { runOffline } = require('./offline.cjs');
+const inject = require('./injection');
 
 const exec = promisify(execFile);
 const maxScriptBytes = 2 * 1024 * 1024;
@@ -164,13 +165,56 @@ app.whenReady().then(async () => {
     await writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
     return settings.robloxPath;
   });
-  handle('launch-roblox', async () => {
+  // Launched Roblox with injection enabled
+handle('launch-roblox-injector', async () => {
+	// Get user-selected Roblox path
+	const { exec } = require('child_process');
+	const fs = require('fs');
+	
+	const run = exec.sync('where.exe', {encoding: 'utf8'});
+	if (!run.stdout) {
+		return { success: false, error: 'Cannot auto-detect Roblox path' };
+	}
+	
+	// Extract DLLs from AutoExec folder and inject into RobloxPlayerBeta.exe
+	// when launch-roblox-injector is clicked
+	const autoExecPath = path.join(process.resourcesPath, 'dlls', 'AutoExec');
+const dlls = await injectFromDllDirectory(autoExecPath);
+	
+	if (!dlls.length) {
+		return { 
+			success: false, 
+			message: 'No DLLs found in AutoExec folder - please place DLLs in the AutoExec subdirectory of your Roblox installation',
+			pathToCheck: process.resourcesPath + '\\AutoExec'
+		};
+	}
+	
+	// Inject each DLL
+	const injected = [];
+	for (const dll of dlls) {
+		const result = await injectFromDllDirectory(dll);
+		if (result.success) {
+			injected.push({ dll, success: true, message: result.message });
+		} else {
+			injected.push({ dll, success: false, error: result.error });
+		}
+	}
+	
+	return {
+		success: injected.some(i => i.success),
+		injected,
+		fullPath: process.resourcesPath + '\\AutoExec'
+	};
+});
+
+handle('launch-roblox', async () => {
     if (!settings.robloxPath || path.basename(settings.robloxPath).toLowerCase() !== 'robloxplayerbeta.exe') throw new Error('Choose RobloxPlayerBeta.exe first');
     const error = await shell.openPath(settings.robloxPath);
     if (error) throw new Error(error);
     return true;
   });
   handle('terminate-roblox', async pid => {
+
     if (!Number.isInteger(pid) || !(await listRoblox()).some(item => item.pid === pid)) throw new Error('Roblox process not found');
     process.kill(pid);
     return true;
@@ -187,4 +231,3 @@ app.whenReady().then(async () => {
 }).catch(error => { console.error(error); app.quit(); });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-"// inject-roblox handler" 

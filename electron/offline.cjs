@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-async function runOnline(source, executable) {
+async function runOffline(source, executable) {
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ohm-luau-'));
   const file = path.join(folder, 'script.luau');
   try {
