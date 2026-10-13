@@ -1,8 +1,45 @@
 # Ohm source review
 
-Reviewed 2026-10-13. **Do not release this snapshot.** The earlier 0.1.2 startup
-repair is present, but subsequent injector edits introduce a new startup failure.
-The historical portable smoke test in HANDOFF.md does not cover this snapshot.
+## Repair update (2026-10-13)
+
+The startup and editor fixes below supersede the original findings where noted.
+The injector source files are preserved. The Electron bridge now imports from the
+correct path, has explicit helper bindings and one instance, and can load without
+browser globals. Its renderer class has a CommonJS export and rejects negative
+backend results instead of reporting success. Both bridge files are packaged.
+
+The native execution backend is still absent. The launch-with-injection channel
+returns `BACKEND_UNAVAILABLE` instead of throwing on nonexistent functions. This
+is error handling, not completed live injection. Dormant directory-helper bodies
+remain prototypes behind the unavailable-backend guard. The separate nodeinject
+prototype and driver declarations are preserved unchanged, including their known
+limitations. No anti-cheat bypass or native injection implementation was added.
+
+Other repairs:
+- Saving checks the model version, deduplicates pending saves, and keeps tab focus.
+- Closing a tab during a save is blocked; window closure warns about unsaved work.
+- Atomic writes use unique temporary files and serialize writes per destination.
+  Save requests are queued before asynchronous path checks to preserve order.
+- Regression tests exercise startup, packaging entries, unavailable/rejected
+  backend results, save races, cancellation, write failure/retry and close choices.
+
+Validation: `npm run check` passed with nine new regression tests, existing tests,
+syntax checks and production build. Vite's existing large-chunk warning remains.
+The unpacked Windows application was rebuilt in `release/bugfix-check` and smoke
+verified through its packaged renderer. Startup, local output 42, malformed script
+error reporting, concurrent file saves and the renderer's close guard passed with
+no renderer exceptions. Evidence: `release/bugfix-verification/smoke-result.json`.
+The native dialog choices were unit tested; the smoke test dispatches a cancelable
+beforeunload event rather than clicking the operating-system dialog.
+
+No crash recovery is implemented. No installed copy was replaced, and no updated
+installer or portable distribution was published. Live Player execution remains
+unfinished and unverified. This remains a draft, not a production-ready release.
+
+## Original review snapshot
+
+The following findings describe the source before the repair above; their line
+numbers and reproduction commands refer to that historical snapshot.
 
 ## Scope
 

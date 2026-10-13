@@ -3,26 +3,29 @@
 
 const fs = require('fs');
 const path = require('path');
-const { RobloxInjector } = require('../../src/injector/injection');
+const { RobloxInjector } = require('../src/injector/injection');
+
+const injector = new RobloxInjector();
 
 // Export the API functions that will be used by Electron IPC handlers
 module.exports = {
+  status: function() {
+    return { available: false, code: 'BACKEND_UNAVAILABLE', message: 'No compatible live execution backend is configured.' };
+  },
   inject: function(pid, dllPath, bypassCfG) {
-    const injector = window.robloxInjector || new RobloxInjector();
     return injector.inject(pid, dllPath, bypassCfG);
   },
   uninject: function(pid) {
-    const injector = window.robloxInjector || new RobloxInjector();
     return injector.unload(pid);
   },
   list: function() {
-    return window.robloxInjector?.list?.() || [];
+    return injector.list();
   },
   unloadAll: function() {
-    const injector = window.robloxInjector || new RobloxInjector();
     return injector.unloadAll();
   },
   injectFromDirectory: async function(directory) {
+    if (!module.exports.status().available) return injectFromDirectory._detectAndInject();
     if (!directory) {
       // Try to auto-detect Roblox installation
       return injectFromDirectory._detectAndInject();
@@ -45,6 +48,7 @@ module.exports = {
     }
   },
   injectFromDllDirectory: async function(directory) {
+    if (!module.exports.status().available) return injectFromDirectory._detectAndInject();
     // Direct function - same logic as injectFromDirectory._injectFromDll
     if (!directory) {
       return injectFromDirectory._detectAndInject();
@@ -64,6 +68,13 @@ module.exports = {
       message: `✓ Injected ${path.basename(dllToInject)}`
     };
   }
+};
+
+// These are local bindings; object properties do not declare variables.
+const inject = module.exports;
+const injectFromDirectory = module.exports.injectFromDirectory;
+injectFromDirectory._detectAndInject = async function() {
+  return { success: false, code: 'BACKEND_UNAVAILABLE', error: module.exports.status().message };
 };
 
 // Private helper to detect and inject from Roblox's folder

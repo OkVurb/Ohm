@@ -1,8 +1,13 @@
 # Ohm handoff
 
-> Review update (2026-10-13): the latest injector edits break startup again.
-> Read [CODE_REVIEW.md](CODE_REVIEW.md) before implementation or release.
-> Earlier build and smoke-test results apply only to the earlier source snapshot.
+Copyable small-step Jcode instructions: [JCODE_PROMPT.md](JCODE_PROMPT.md).
+
+> Repair update (2026-10-13): injector sources are preserved, and the JavaScript
+> bridge now loads in the main process and is included in the package. Startup,
+> save-race and normal window-close data-loss fixes are tested. See the repair
+> section of [CODE_REVIEW.md](CODE_REVIEW.md) for exact evidence and remaining gaps.
+> A native backend, live Player execution and crash recovery remain unfinished.
+> The native injector prototype was not completed. No installed copy was changed.
 
 > Current instructions: follow **Requested next implementation (2026-10-12)**
 > below. That section supersedes older next-work suggestions and scope options.

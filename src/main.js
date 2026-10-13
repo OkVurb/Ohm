@@ -2,6 +2,7 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import 'monaco-editor/languages/definitions/lua/register';
 import './style.css';
+import { saveTab, hasUnsavedWork } from './save.mjs';
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
 
@@ -89,6 +90,7 @@ function closeTab(id) {
   const index = state.tabs.findIndex(tab => tab.id === id);
   if (index < 0) return;
   const tab = state.tabs[index];
+  if (tab.saving) return log('Wait for the save to finish before closing this tab.');
   if (tab.dirty && !confirm(`Discard unsaved changes in ${titleOf(tab)}?`)) return;
   state.tabs.splice(index, 1);
   tab.model.dispose();
@@ -114,12 +116,9 @@ async function saveActive() {
   const tab = state.tabs.find(item => item.id === state.active);
   if (!tab) return;
   try {
-    const content = tab.model.getValue();
-    const file = tab.path ? await window.ohm.saveFile(tab.path, content) : await window.ohm.saveAs(tab.name, content);
-    if (!file) return;
-    tab.path = file;
-    tab.dirty = false;
-    activate(tab.id);
+    if (!await saveTab(tab, window.ohm)) return;
+    renderTabs();
+    if (state.active === tab.id) $('#statusLeft').textContent = tab.path;
     log(`Saved ${titleOf(tab)}`);
     renderSidebar();
   } catch (error) { showError(error); }
@@ -274,6 +273,11 @@ function bind() {
       applySettings();
       log('Settings saved');
     } catch (error) { showError(error); }
+  });
+  window.addEventListener('beforeunload', event => {
+    if (!hasUnsavedWork(state.tabs)) return;
+    event.preventDefault();
+    event.returnValue = false;
   });
   window.addEventListener('keydown', event => {
     if (!(event.ctrlKey || event.metaKey)) return;

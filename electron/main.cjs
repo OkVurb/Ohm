@@ -6,7 +6,8 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { defaults, cleanSettings, autoexecName, inside } = require('./core.cjs');
 const { runOffline } = require('./offline.cjs');
-const inject = require('./injection');
+const { writeAtomic } = require('./storage.cjs');
+const inject = require('./injection.js');
 
 const exec = promisify(execFile);
 const maxScriptBytes = 2 * 1024 * 1024;
@@ -16,12 +17,7 @@ let workspace;
 let settingsPath;
 let settings;
 const approvedFiles = new Set();
-
-async function writeAtomic(file, value) {
-  const temp = `${file}.${process.pid}.tmp`;
-  await fsp.writeFile(temp, value, 'utf8');
-  await fsp.rename(temp, file);
-}
+let pendingFileSave = Promise.resolve();
 
 async function readScript(file) {
   if ((await fsp.stat(file)).size > maxScriptBytes) throw new Error('Script exceeds 2 MB');
@@ -86,6 +82,19 @@ async function createWindow() {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
+  win.webContents.on('will-prevent-unload', event => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['Keep editing', 'Discard changes and close'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Unsaved changes',
+      message: 'Some scripts have unsaved changes or a save in progress.',
+      detail: 'Keep editing to save your work before closing Ohm.'
+    });
+    // For this Electron event, preventDefault allows the window to close.
+    if (choice === 1) event.preventDefault();
+  });
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
@@ -115,9 +124,14 @@ app.whenReady().then(async () => {
     return files;
   });
   handle('read-file', async file => readScript(await checkedFile(file)));
-  handle('save-file', async (file, content) => {
-    await writeAtomic(await checkedFile(file, true), checkedText(content));
-    return file;
+  handle('save-file', (file, content) => {
+    // Queue before asynchronous path checks, which can otherwise reorder requests.
+    const save = pendingFileSave.catch(() => {}).then(async () => {
+      await writeAtomic(await checkedFile(file, true), checkedText(content));
+      return file;
+    });
+    pendingFileSave = save;
+    return save;
   });
   handle('save-as', async (name, content) => {
     const result = await dialog.showSaveDialog(win, { defaultPath: path.join(workspace, path.basename(String(name || 'script.lua'))), filters: [{ name: 'Luau', extensions: ['lua', 'luau'] }, { name: 'Text', extensions: ['txt', 'json', 'md'] }] });
@@ -165,49 +179,14 @@ app.whenReady().then(async () => {
     await writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
     return settings.robloxPath;
   });
-  // Launched Roblox with injection enabled
-handle('launch-roblox-injector', async () => {
-	// Get user-selected Roblox path
-	const { exec } = require('child_process');
-	const fs = require('fs');
-	
-	const run = exec.sync('where.exe', {encoding: 'utf8'});
-	if (!run.stdout) {
-		return { success: false, error: 'Cannot auto-detect Roblox path' };
-	}
-	
-	// Extract DLLs from AutoExec folder and inject into RobloxPlayerBeta.exe
-	// when launch-roblox-injector is clicked
-	const autoExecPath = path.join(process.resourcesPath, 'dlls', 'AutoExec');
-const dlls = await injectFromDllDirectory(autoExecPath);
-	
-	if (!dlls.length) {
-		return { 
-			success: false, 
-			message: 'No DLLs found in AutoExec folder - please place DLLs in the AutoExec subdirectory of your Roblox installation',
-			pathToCheck: process.resourcesPath + '\\AutoExec'
-		};
-	}
-	
-	// Inject each DLL
-	const injected = [];
-	for (const dll of dlls) {
-		const result = await injectFromDllDirectory(dll);
-		if (result.success) {
-			injected.push({ dll, success: true, message: result.message });
-		} else {
-			injected.push({ dll, success: false, error: result.error });
-		}
-	}
-	
-	return {
-		success: injected.some(i => i.success),
-		injected,
-		fullPath: process.resourcesPath + '\\AutoExec'
-	};
-});
+  // Loading the bridge is safe even when its native backend is unavailable.
+  handle('launch-roblox-injector', async () => ({
+    success: false,
+    code: 'BACKEND_UNAVAILABLE',
+    error: inject.status().message
+  }));
 
-handle('launch-roblox', async () => {
+  handle('launch-roblox', async () => {
     if (!settings.robloxPath || path.basename(settings.robloxPath).toLowerCase() !== 'robloxplayerbeta.exe') throw new Error('Choose RobloxPlayerBeta.exe first');
     const error = await shell.openPath(settings.robloxPath);
     if (error) throw new Error(error);

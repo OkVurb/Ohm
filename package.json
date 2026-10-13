@@ -2,20 +2,20 @@
   "name": "ohm",
   "version": "0.1.2",
   "private": true,
-  "description": "Desktop Luau workspace for Roblox Studio projects",
+  "description": "Desktop Luau workspace",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "start": "electron .",
     "build": "vite build",
     "dist": "npm run check && electron-builder --win nsis portable",
-    "check": "node electron/core.test.cjs && node electron/offline.test.cjs && node --check electron/main.cjs && node --check electron/preload.cjs && node --check src/main.js && npm run build"
+    "check": "node electron/core.test.cjs && node electron/offline.test.cjs && node --test electron/storage.test.cjs electron/startup.test.cjs electron/injection.test.cjs src/save.test.mjs && node --check electron/main.cjs && node --check electron/preload.cjs && node --check src/main.js && npm run build"
   },
   "build": {
     "appId": "app.ohm.desktop",
     "productName": "Ohm",
     "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/main.cjs", "electron/preload.cjs", "electron/core.cjs", "electron/offline.cjs", "assets/ohm-icon.ico", "package.json"],
+    "files": ["dist/**/*", "electron/main.cjs", "electron/preload.cjs", "electron/core.cjs", "electron/offline.cjs", "electron/storage.cjs", "electron/injection.js", "src/injector/injection.js", "assets/ohm-icon.ico", "package.json"],
     "extraResources": [{ "from": "vendor/luau", "to": "luau", "filter": ["luau.exe", "LICENSE.txt"] }],
     "win": { "target": ["nsis", "portable"], "icon": "assets/ohm-icon.ico" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "artifactName": "Ohm-Setup-${version}-${arch}.${ext}" },

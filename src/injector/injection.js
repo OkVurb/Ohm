@@ -3,6 +3,8 @@
 
 class RobloxInjector {
   constructor() {
+    // This bridge may be imported in Electron's main process, without a window.
+    this.api = typeof window === 'undefined' ? null : window.ohm;
     this.injected = new Map();
     this.pending = new Map();
   }
@@ -20,18 +22,22 @@ class RobloxInjector {
       if (!dllPath || dllPath.length > 1024) throw new Error('Invalid DLL path');
       if (typeof bypassCfG !== 'boolean') bypassCfG = true;
 
-      await window.ohm.injectRoblox({ pid, dllPath, bypassCfG });
+      if (typeof this.api?.injectRoblox !== 'function') {
+        throw new Error('No compatible live execution backend is configured.');
+      }
+      const result = await this.api.injectRoblox({ pid, dllPath, bypassCfG });
+      if (result?.success !== true) throw new Error(result?.error || 'Backend did not confirm injection');
 
       const entry = { pid, dll: dllPath, timestamp: Date.now() };
       this.injected.set(entry.pid, entry);
       
-      log(`[Injector] Injected ${dllPath} into PID ${pid}`);
+      this.pending.delete(pid);
 
       return { success: true, pid, dll: dllPath, timestamp: entry.timestamp };
     } catch (err) {
       const entry = { pid, dll: dllPath, timestamp: Date.now(), error: err.message };
       this.pending.set(entry.pid, entry);
-      log(`[Injector] Failed to inject PID ${pid}: ${err.message}`, 'error');
+
       return { success: false, pid, error: err.message };
     }
   }
@@ -41,8 +47,8 @@ class RobloxInjector {
    * @returns {Array<Object>} - Array of injection entries
    */
   list() {
-    return Array.from(this.injected.entries())
-      .sort((a, b) => a[0] - b[0]);
+    return Array.from(this.injected.values())
+      .sort((a, b) => a.pid - b.pid);
   }
 
   /**
@@ -52,7 +58,9 @@ class RobloxInjector {
    */
   async unload(pid) {
     try {
-      await window.ohm.uninjectRoblox(pid);
+      if (typeof this.api?.uninjectRoblox !== 'function') return false;
+      const result = await this.api.uninjectRoblox(pid);
+      if (result !== true && result?.success !== true) return false;
       this.injected.delete(pid);
       return true;
     } catch {
@@ -73,4 +81,5 @@ class RobloxInjector {
 }
 
 // Export global instances
-window.robloxInjector = new RobloxInjector();
+if (typeof module !== 'undefined') module.exports = { RobloxInjector };
+if (typeof window !== 'undefined') window.robloxInjector = new RobloxInjector();
