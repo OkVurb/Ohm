@@ -2,9 +2,9 @@
 
 # Ohm
 
-> Review snapshot (2026-10-13): current injector changes introduce startup
-> blockers. See [CODE_REVIEW.md](CODE_REVIEW.md). The capabilities and historical
-> 0.1.2 repair described below do not establish that this snapshot starts.
+> Version 0.1.3 repairs startup, adds local draft recovery, and fixes editor,
+> settings and autoexec storage reliability. Live Player execution remains
+> unavailable. See [CODE_REVIEW.md](CODE_REVIEW.md) for verification and limits.
 
 Ohm is an independent Windows desktop workspace for Luau scripts. It has no account, subscription, license key, or hardware ID system.
 
@@ -12,7 +12,8 @@ Ohm is an independent Windows desktop workspace for Luau scripts. It has no acco
 
 - Monaco based Luau editor with multiple tabs, syntax highlighting, and unsaved change prompts.
 - Open, edit, and save local scripts. Choose a workspace folder and reopen it on the next launch.
-- Store and delete local autoexec scripts. These are file storage only.
+- Save, open, edit and delete local autoexec scripts with filename validation and replacement confirmation. These are file storage only.
+- Recover unsaved drafts after restart. Closing offers keep editing, keep drafts or discard.
 - Dark and light themes, font size, word wrap, and always on top.
 - Detect Roblox Player processes, launch a selected Roblox executable, and end a selected process after confirmation.
 - Windows installer and portable executable with the Ohm Ω icon.
@@ -26,7 +27,7 @@ Ohm also does not implement Volt's account services, remote updates, or instance
 
 ## Develop and build
 
-Requires Node.js on Windows.
+Requires Node.js 22.12 or newer on Windows.
 
 ```powershell
 npm ci
@@ -36,8 +37,35 @@ npm run dist
 
 Build outputs are written to `release/`. `Ohm-Setup` is the installer and `Ohm-Portable` runs without installation. Local settings and the default workspace are stored under the app's user data folder.
 
-`npm run dist` runs the checks before packaging. Version 0.1.2 fixes the startup
-crash caused by exporting an undefined `runOffline` after the function was renamed.
-Use the newly built 0.1.2 files in `release/`; the older 0.1.1 executables in the
-repository root and an existing installation are not updated by building.
-This repair restores the local runner. It does not add live Roblox execution.
+`npm run dist` runs checks before packaging. Version 0.1.3 includes the startup
+repair for the undefined `runOffline` export and subsequent reliability fixes.
+Building does not update an existing installation or the older root-level EXEs.
+The locally verified 0.1.3 build is under `release/reliability-check/`. Its installer
+and portable executable are unsigned. Smoke verification covers the unpacked app;
+installer lifecycle and the portable wrapper were not exercised.
+
+## Draft recovery
+
+Unsaved buffers are checkpointed locally about every 500 ms. The latest completed
+checkpoint is restored as unsaved tabs, without granting access to original paths.
+Save recovered tabs to files when ready. A crash can lose edits made after the
+last completed checkpoint; recovery is not a backup or a power-loss guarantee.
+Recovery supports 50 drafts, 2 MB per script and 8 MB total. Failures appear in
+the status bar. Corrupt recovery data is preserved in a separate local file.
+
+## Packaged verification
+
+Requires Windows and Node.js 22.12 or newer. Build the unpacked app first:
+
+```powershell
+npm run check
+npx electron-builder --win --dir --config.directories.output=release/reliability-check
+npm run smoke
+```
+
+The smoke check launches isolated profiles and tests local execution, autoexec
+editing, settings persistence, concurrent saves, crash recovery and close choices.
+Native dialog responses are simulated only inside the test process; the packaged
+renderer, main process and file writes are real. Results and a screenshot are
+saved under `release/reliability-verification/`. A different unpacked executable
+can be supplied with `npm run smoke -- "C:\path\to\Ohm.exe"`.

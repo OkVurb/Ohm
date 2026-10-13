@@ -7,6 +7,7 @@ const { promisify } = require('node:util');
 const { defaults, cleanSettings, autoexecName, inside } = require('./core.cjs');
 const { runOffline } = require('./offline.cjs');
 const { writeAtomic } = require('./storage.cjs');
+const { cleanRecovery, emptyRecovery, loadRecovery } = require('./recovery.cjs');
 const inject = require('./injection.js');
 
 const exec = promisify(execFile);
@@ -16,8 +17,53 @@ let root;
 let workspace;
 let settingsPath;
 let settings;
+let recovery;
+let recoveryPath;
+let recoveryError;
 const approvedFiles = new Set();
 let pendingFileSave = Promise.resolve();
+let pendingSettings = Promise.resolve();
+let pendingAutoexec = Promise.resolve();
+let pendingClose;
+let rendererReady = false;
+let closeApproved = false;
+
+function updateSettings(patch) {
+  const update = pendingSettings.catch(() => {}).then(async () => {
+    const next = cleanSettings(patch, settings);
+    await writeAtomic(settingsPath, JSON.stringify(next, null, 2));
+    settings = next;
+    if (win && !win.isDestroyed()) win.setAlwaysOnTop(next.alwaysOnTop);
+    return next;
+  });
+  pendingSettings = update;
+  return update;
+}
+
+async function saveRecovery(value) {
+  if (recoveryError) throw new Error(recoveryError);
+  const next = cleanRecovery(value);
+  await writeAtomic(recoveryPath, JSON.stringify(next));
+  recovery.session = next;
+  return true;
+}
+
+function autoexecOperation(operation) {
+  const next = pendingAutoexec.catch(() => {}).then(operation);
+  pendingAutoexec = next;
+  return next;
+}
+
+async function autoexecFile(name, allowNew = false) {
+  const file = path.join(root, 'autoexec', autoexecName(name));
+  try {
+    if (!(await fsp.lstat(file)).isFile()) throw new Error('Autoexec scripts must be regular files');
+    return { file, exists: true };
+  } catch (error) {
+    if (allowNew && error.code === 'ENOENT') return { file, exists: false };
+    throw error;
+  }
+}
 
 async function readScript(file) {
   if ((await fsp.stat(file)).size > maxScriptBytes) throw new Error('Script exceeds 2 MB');
@@ -75,6 +121,8 @@ async function listRoblox() {
 }
 
 async function createWindow() {
+  rendererReady = false;
+  closeApproved = false;
   win = new BrowserWindow({
     width: 1260, height: 790, minWidth: 870, minHeight: 560,
     title: 'Ohm', icon: path.join(__dirname, '..', 'assets', 'ohm-icon.ico'), backgroundColor: '#0e1015', autoHideMenuBar: true,
@@ -82,28 +130,38 @@ async function createWindow() {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  win.webContents.on('will-prevent-unload', event => {
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'warning',
-      buttons: ['Keep editing', 'Discard changes and close'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Unsaved changes',
-      message: 'Some scripts have unsaved changes or a save in progress.',
-      detail: 'Keep editing to save your work before closing Ohm.'
-    });
-    // For this Electron event, preventDefault allows the window to close.
-    if (choice === 1) event.preventDefault();
+  win.webContents.on('render-process-gone', () => { rendererReady = false; });
+  // Intercept the native close before beforeunload, including restored sessions
+  // where Chromium has not yet received a user gesture.
+  win.on('close', event => {
+    if (closeApproved || !rendererReady) return;
+    event.preventDefault();
+    win.webContents.send('ohm:close-requested');
   });
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
 app.whenReady().then(async () => {
   root = app.getPath('userData');
   workspace = path.join(root, 'workspace');
   settingsPath = path.join(root, 'settings.json');
+  recoveryPath = path.join(root, 'drafts.json');
   await fsp.mkdir(workspace, { recursive: true });
   await fsp.mkdir(path.join(root, 'autoexec'), { recursive: true });
+  try { recovery = await loadRecovery(recoveryPath); }
+  catch (error) {
+    recoveryError = `Draft recovery is unavailable: ${error.message}`;
+    recovery = { session: emptyRecovery(), warning: recoveryError };
+  }
   try { settings = cleanSettings(JSON.parse(await fsp.readFile(settingsPath, 'utf8'))); }
   catch { settings = { ...defaults }; }
   try {
@@ -111,7 +169,43 @@ app.whenReady().then(async () => {
     if (typeof saved.path === 'string' && (await fsp.stat(saved.path)).isDirectory()) workspace = await fsp.realpath(saved.path);
   } catch { /* Keep the built-in workspace if a saved folder moved. */ }
 
-  handle('init', async () => ({ workspace, settings, files: await listTree(workspace), autoexec: await fsp.readdir(path.join(root, 'autoexec')) }));
+  handle('init', async () => ({ workspace, settings, recovery: recovery.session, recoveryWarning: recovery.warning }));
+  handle('renderer-ready', () => { rendererReady = true; return true; });
+  handle('save-recovery', saveRecovery);
+  handle('prepare-close', snapshot => {
+    if (pendingClose) return pendingClose;
+    closeApproved = false;
+    pendingClose = (async () => {
+      if (!snapshot || !Array.isArray(snapshot.drafts)) throw new TypeError('Invalid close request');
+      await Promise.allSettled([pendingFileSave, pendingSettings, pendingAutoexec]);
+      let next = emptyRecovery();
+      if (snapshot.drafts.length) {
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'warning',
+          buttons: ['Keep editing', 'Keep drafts and close', 'Discard changes and close'],
+          defaultId: 0, cancelId: 0, title: 'Unsaved changes',
+          message: 'Some scripts have unsaved changes.',
+          detail: 'Keep drafts saves a local recovery copy and restores it next time. Original files stay unchanged.'
+        });
+        if (response === 0) return false;
+        if (response === 1) next = cleanRecovery(snapshot);
+        else if (response !== 2) return false;
+      }
+      try { await saveRecovery(next); }
+      catch (error) {
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'error', buttons: ['Keep editing', 'Close without recovery'],
+          defaultId: 0, cancelId: 0, title: 'Draft recovery could not be saved',
+          message: 'Ohm could not update your recovery copy.',
+          detail: `${error.message}\n\nSave your scripts to files before closing. Closing now can lose unsaved changes. Older recovery data will remain and may reappear next time.`
+        });
+        if (response !== 1) return false;
+      }
+      closeApproved = true;
+      return true;
+    })().finally(() => { pendingClose = null; });
+    return pendingClose;
+  });
   handle('open-files', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Text and Luau', extensions: ['lua', 'luau', 'txt', 'json', 'md'] }] });
     if (result.canceled) return [];
@@ -145,39 +239,55 @@ app.whenReady().then(async () => {
   handle('choose-workspace', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
     if (result.canceled) return workspace;
-    workspace = await fsp.realpath(result.filePaths[0]);
-    await writeAtomic(path.join(root, 'workspace.json'), JSON.stringify({ path: workspace }));
+    const chosen = await fsp.realpath(result.filePaths[0]);
+    await writeAtomic(path.join(root, 'workspace.json'), JSON.stringify({ path: chosen }));
+    workspace = chosen;
     return workspace;
   });
   handle('get-settings', async () => settings);
-  handle('set-settings', async patch => {
-    settings = cleanSettings(patch, settings);
-    await writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
-    win.setAlwaysOnTop(settings.alwaysOnTop);
-    return settings;
+  handle('set-settings', updateSettings);
+  handle('list-autoexec', async () => (await fsp.readdir(path.join(root, 'autoexec'), { withFileTypes: true }))
+    .filter(entry => {
+      if (!entry.isFile()) return false;
+      try { autoexecName(entry.name); return true; } catch { return false; }
+    }).map(entry => entry.name).sort((a, b) => a.localeCompare(b)));
+  handle('read-autoexec', async name => {
+    const { file } = await autoexecFile(name);
+    const real = await fsp.realpath(file);
+    const content = await readScript(real);
+    approvedFiles.add(real);
+    return { path: real, content };
   });
-  handle('list-autoexec', async () => (await fsp.readdir(path.join(root, 'autoexec'))).filter(name => /\.lua$/i.test(name)));
   handle('run-offline', async source => {
     const executable = app.isPackaged
       ? path.join(process.resourcesPath, 'luau', 'luau.exe')
       : path.join(__dirname, '..', 'vendor', 'luau', 'luau.exe');
     return runOffline(checkedText(source), executable);
   });
-  handle('save-autoexec', async (name, content) => {
-    await writeAtomic(path.join(root, 'autoexec', autoexecName(name)), checkedText(content));
+  handle('save-autoexec', (name, content) => autoexecOperation(async () => {
+    checkedText(content);
+    const { file, exists } = await autoexecFile(name, true);
+    if (exists) {
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question', buttons: ['Cancel', 'Replace'], defaultId: 0, cancelId: 0,
+        title: 'Replace autoexec script', message: `Replace ${name}?`, detail: 'This replaces the saved autoexec file.'
+      });
+      if (response !== 1) return null;
+    }
+    await writeAtomic(file, content);
     return name;
-  });
-  handle('delete-autoexec', async name => {
-    await fsp.unlink(path.join(root, 'autoexec', autoexecName(name)));
+  }));
+  handle('delete-autoexec', name => autoexecOperation(async () => {
+    await fsp.unlink((await autoexecFile(name)).file);
     return true;
-  });
+  }));
   handle('list-roblox', listRoblox);
   handle('choose-roblox', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Roblox executable', extensions: ['exe'] }] });
     if (result.canceled) return settings.robloxPath;
-    settings = cleanSettings({ robloxPath: result.filePaths[0] }, settings);
-    await writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
-    return settings.robloxPath;
+    const chosen = result.filePaths[0];
+    if (path.basename(chosen).toLowerCase() !== 'robloxplayerbeta.exe') throw new Error('Choose RobloxPlayerBeta.exe');
+    return (await updateSettings({ robloxPath: chosen })).robloxPath;
   });
   // Loading the bridge is safe even when its native backend is unavailable.
   handle('launch-roblox-injector', async () => ({
@@ -198,15 +308,11 @@ app.whenReady().then(async () => {
     process.kill(pid);
     return true;
   });
-  handle('set-topmost', async value => {
-    settings = cleanSettings({ alwaysOnTop: value }, settings);
-    win.setAlwaysOnTop(value);
-    await writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
-    return value;
-  });
+  handle('set-topmost', async value => (await updateSettings({ alwaysOnTop: value })).alwaysOnTop);
   await createWindow();
   win.setAlwaysOnTop(settings.alwaysOnTop);
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow().catch(console.error); });
 }).catch(error => { console.error(error); app.quit(); });
+}
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

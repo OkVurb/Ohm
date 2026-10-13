@@ -2,12 +2,28 @@
 
 Copyable small-step Jcode instructions: [JCODE_PROMPT.md](JCODE_PROMPT.md).
 
-> Repair update (2026-10-13): injector sources are preserved, and the JavaScript
-> bridge now loads in the main process and is included in the package. Startup,
-> save-race and normal window-close data-loss fixes are tested. See the repair
-> section of [CODE_REVIEW.md](CODE_REVIEW.md) for exact evidence and remaining gaps.
-> A native backend, live Player execution and crash recovery remain unfinished.
-> The native injector prototype was not completed. No installed copy was changed.
+> Repair update (2026-10-13, version 0.1.3): injector sources are preserved.
+> Startup, ordered saves, local draft recovery, native close choices, autoexec
+> storage/editing and settings persistence are implemented and tested.
+> See [CODE_REVIEW.md](CODE_REVIEW.md) for exact checks and remaining gaps.
+> Live Player execution and the native injector prototype remain unfinished.
+> No installed copy was replaced. No new GitHub release was published.
+
+Current checkout: `C:\Users\cr0od\OneDrive\Documents\GitHub\Ohm`.
+The repository is public. Review work belongs on `codex/ohm-greptile-review` and
+[the existing draft pull request](https://github.com/OkVurb/Ohm/pull/1).
+Local main includes old oversized executable commits; do not push that ancestry.
+Use `npm run check` and the packaged smoke instructions in README.md.
+Local 0.1.3 installer and portable files are in `release/reliability-check/`.
+Both are unsigned. The unpacked app passed smoke tests; installation, upgrades,
+uninstallation and the portable wrapper itself were not exercised.
+
+Recovery restores the latest completed checkpoint as pathless dirty tabs.
+A crash can lose the most recent uncheckpointed edits. Original files require
+an explicit save. Autoexec storage does not automatically run scripts.
+Native backend/provider contracts, account services, updater infrastructure,
+instance grouping, release signing and installer lifecycle verification remain
+open. No substitute backend or fabricated online-success result was added.
 
 > Current instructions: follow **Requested next implementation (2026-10-12)**
 > below. That section supersedes older next-work suggestions and scope options.
@@ -17,9 +33,9 @@ Copyable small-step Jcode instructions: [JCODE_PROMPT.md](JCODE_PROMPT.md).
 
 Recreate Volt as a Windows desktop app named **Ohm**, covering Volt features except its key/license system. Use an Ω app icon. The user specifically needs `Emulator.dll`, `Executor.dll`, and `volt.bin` accounted for.
 
-## Current artifacts
+## Historical initial artifacts
 
-- Private source repo: https://github.com/OkVurb/Ohm
+- Source repo, private at the time of this initial snapshot: https://github.com/OkVurb/Ohm
 - Preview release with Windows installer and portable EXE: https://github.com/OkVurb/Ohm/releases/tag/v0.1.0-preview
 - Local source: `C:\Users\cr0od\Documents\Ohm`
 - Reverse-engineering report and recovered frontend: `C:\Users\cr0od\Documents\Volt-Reverse-Engineering\REPORT.md`
@@ -35,7 +51,7 @@ The GitHub preview release has a Luau editor, local file/workspace features, the
 - Volt's recovered frontend calls native `install_volt_files`, `update_volt_files`, `restore_cached_volt_files`, and `get_installation_status` commands. It does not expose a direct DLL URL.
 - The official UI download is https://api.voltbz.net/version/download/ui . Volt documentation describes setup inside the app and an active license for running it: https://docs.voltbz.net/docs/guides/getting-started . No separate official public DLL download was found. Windows Defender detection history showed no matching removal record in the check.
 
-## Next work
+## Historical next work
 
 1. If the user has legitimate Volt account access, inspect the app's own setup/update result and the installed files. Do not bypass its license or repackage proprietary DLLs into Ohm.
 2. Continue independent Ohm implementation against documented behavior. Track missing functions explicitly; do not claim all Volt features work until verified.

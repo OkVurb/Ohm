@@ -1,40 +1,56 @@
 # Ohm source review
 
-## Repair update (2026-10-13)
+## Repair update (2026-10-13, version 0.1.3)
 
-The startup and editor fixes below supersede the original findings where noted.
-The injector source files are preserved. The Electron bridge now imports from the
-correct path, has explicit helper bindings and one instance, and can load without
-browser globals. Its renderer class has a CommonJS export and rejects negative
-backend results instead of reporting success. Both bridge files are packaged.
+The changes below supersede the original findings where noted. All injector
+source files are retained. The Electron bridge loads from the correct path,
+uses explicit bindings and one instance, and no longer requires browser globals.
+The renderer class has a CommonJS export. Negative backend results stay failures,
+and both bridge modules are packaged.
 
-The native execution backend is still absent. The launch-with-injection channel
-returns `BACKEND_UNAVAILABLE` instead of throwing on nonexistent functions. This
-is error handling, not completed live injection. Dormant directory-helper bodies
-remain prototypes behind the unavailable-backend guard. The separate nodeinject
-prototype and driver declarations are preserved unchanged, including their known
-limitations. No anti-cheat bypass or native injection implementation was added.
+Completed application repairs:
+- Saves preserve newer edits, deduplicate pending requests and retain tab focus.
+  Atomic writes use unique temporary files and serialize each destination.
+- Draft checkpoints restore dirty buffers as pathless unsaved tabs after restart.
+  Invalid recovery data is preserved separately. Size/count limits are enforced.
+- Native window closure waits for the renderer and pending writes. Users can keep
+  editing, keep drafts, or discard. Failed recovery writes keep the window open
+  unless the user explicitly chooses to close without recovery.
+- Single-instance startup prevents two normal launches sharing the profile.
+- Autoexec storage uses an HTML filename dialog, validates Windows names,
+  confirms replacement and opens saved scripts in editable tabs.
+- Settings and workspace changes only become active after successful writes.
+  Settings updates are queued. Canceling settings no longer reapplies stale values.
+- Sidebar responses cannot overwrite a newer selected view. Output is bounded.
 
-Other repairs:
-- Saving checks the model version, deduplicates pending saves, and keeps tab focus.
-- Closing a tab during a save is blocked; window closure warns about unsaved work.
-- Atomic writes use unique temporary files and serialize writes per destination.
-  Save requests are queued before asynchronous path checks to preserve order.
-- Regression tests exercise startup, packaging entries, unavailable/rejected
-  backend results, save races, cancellation, write failure/retry and close choices.
+Validation: `npm run check` passed with 21 Node regression tests, existing core
+and real Luau checks, syntax checks and the production build. The existing Vite
+large-chunk warning remains. `npm run smoke` passed against the unpacked Windows
+app in `release/reliability-check/win-unpacked/Ohm.exe`: startup, local output 42,
+syntax-error reporting, autoexec save/open/edit, settings save/cancel/restart,
+latest sidebar response, concurrent saves, abrupt-exit recovery and native
+close/cancel/keep/discard all passed. No renderer exceptions were observed.
+Evidence: `release/reliability-verification/smoke-result.json` and
+`recovered-drafts.png`. Native dialog selections are simulated only in the test
+process; the actual packaged app, close event, renderer and file writes are used.
+Disk-write failures and corrupt recovery files have separate regression coverage.
 
-Validation: `npm run check` passed with nine new regression tests, existing tests,
-syntax checks and production build. Vite's existing large-chunk warning remains.
-The unpacked Windows application was rebuilt in `release/bugfix-check` and smoke
-verified through its packaged renderer. Startup, local output 42, malformed script
-error reporting, concurrent file saves and the renderer's close guard passed with
-no renderer exceptions. Evidence: `release/bugfix-verification/smoke-result.json`.
-The native dialog choices were unit tested; the smoke test dispatches a cancelable
-beforeunload event rather than clicking the operating-system dialog.
+Remaining limits:
+- No native execution backend is configured. The injection launch channel returns
+  `BACKEND_UNAVAILABLE`; this is not live Player execution. The separate nodeinject
+  prototype has known syntax/native-helper defects and driver declarations lack
+  implementations. These sources were preserved, not completed or validated.
+- Autoexec files are stored and editable but do not execute automatically.
+- Account services, remote updates and instance grouping remain unimplemented.
+- Recovery cannot guarantee the last uncheckpointed edits after a crash or power
+  loss. It supports 50 drafts, 2 MB each and 8 MB total.
+- The 0.1.3 installer and portable executable were built locally in
+  `release/reliability-check/`. Both are unsigned. Installer upgrade/uninstall
+  behavior and the portable wrapper itself were not smoke tested.
+  No installed copy was replaced and no GitHub release assets were published.
 
-No crash recovery is implemented. No installed copy was replaced, and no updated
-installer or portable distribution was published. Live Player execution remains
-unfinished and unverified. This remains a draft, not a production-ready release.
+This remains a draft. The completed reliability work does not make the whole
+product production ready or satisfy the requested live execution feature.
 
 ## Original review snapshot
 

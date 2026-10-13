@@ -22,16 +22,37 @@ Already fixed:
 - Concurrent temporary-file collisions and save reordering during path checks.
 - Normal window closure silently discarding unsaved edits.
 
-Verified: npm run check passes, including nine regression tests and the build.
-The unpacked Windows app passed startup, local output 42, syntax-error reporting,
-concurrent saves and the renderer close guard. Native dialog choices were unit
-tested. Native/live execution was not tested. Crash recovery remains absent.
-The separate nodeinject prototype still has known syntax/native-helper defects
-and was preserved unchanged. No new installer was installed or published.
+Also completed in version 0.1.3:
+- Local draft checkpoints, validated recovery files and corrupt-data preservation.
+- Pathless restored tabs so recovery never silently overwrites original files.
+- Native close handshake with keep/cancel/discard and write-failure handling.
+- Single-instance profile protection.
+- Autoexec filename dialog, reserved-name rejection, replacement confirmation,
+  and open/edit/save of stored scripts.
+- Ordered settings writes, workspace persistence errors, settings cancel fix,
+  stale sidebar response protection and bounded output.
 
-Your next work is ordinary application reliability: inspect remaining findings,
-add recoverable drafts, test close/cancel/save behavior, and improve error handling.
-Do not describe the whole product as production ready while those gaps remain.
+Verified: npm run check passes with 21 Node regression tests, existing core/Luau
+checks and the production build. npm run smoke tests the unpacked Windows app,
+including abrupt-exit recovery and close/cancel/keep/discard across restarts.
+Native dialog selections are simulated only in that isolated test process.
+The app, renderer, close event and disk writes are real. Results are under
+release/reliability-verification. Read CODE_REVIEW.md for limitations.
+
+Remaining work is not a blank check to invent implementations:
+- No compatible native backend/provider contract exists in this checkout.
+  Live Player execution is still missing. Renaming offline to online cannot add it.
+- The preserved nodeinject prototype still has syntax/native-helper defects;
+  driver declarations are not implemented. Do not claim these are verified.
+- Autoexec execution, account services, remote updates and instance grouping
+  are absent. Define actual requirements and service contracts before wiring them.
+- Signing, clean-machine installer upgrades/uninstalls, accessibility and broader
+  failure testing remain release work. No installed copy was changed and no
+  new release assets were published during this repair.
+
+Continue with concrete, reproducible application bugs and missing ordinary app
+features. Preserve unfinished source and document genuine blockers. Do not claim
+all code is finished or production ready. No Roblox Studio migration is requested.
 
 Tool rules:
 1. Verify the shell behind Jcode's tool named bash. Prior local evidence showed

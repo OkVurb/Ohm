@@ -3,6 +3,7 @@ import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import 'monaco-editor/languages/definitions/lua/register';
 import './style.css';
 import { saveTab, hasUnsavedWork } from './save.mjs';
+import { createDraftRecovery, snapshotDrafts } from './recovery.mjs';
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
 
@@ -18,20 +19,29 @@ app.innerHTML = `
       <aside class="sidebar"><div class="sidebar-title"><span id="sidebarTitle">EXPLORER</span><button id="sidebarAction" title="Refresh">↻</button></div><div id="sidebarBody"></div></aside>
       <main class="workarea"><div id="tabs" class="tabs"></div><div id="editor"></div><div id="welcome" class="welcome"><span class="welcome-mark">Ω</span><h1>Make something work.</h1><p>Open a Luau script or create a new one to start editing.</p><div class="welcome-actions"><button id="welcomeNew">New script</button><button id="welcomeOpen">Open file</button></div></div><section class="output"><div class="output-title">OUTPUT <button id="clearOutput" title="Clear output">Clear</button></div><div id="messages" role="log" aria-live="polite"></div></section></main>
     </div>
-    <footer class="status"><span id="statusLeft">Ready</span><span id="statusRight">Luau · Ohm</span></footer>
+    <footer class="status"><span id="statusLeft">Ready</span><span id="recoveryStatus"></span><span id="statusRight">Luau · Ohm</span></footer>
   </div>
   <dialog id="settingsDialog"><form method="dialog"><div class="dialog-head"><h2>Settings</h2><button aria-label="Close">×</button></div><label>Theme<select id="theme"><option value="dark">Dark</option><option value="light">Light</option></select></label><label>Font size<input id="fontSize" type="number" min="10" max="28" /></label><label class="check"><input id="wordWrap" type="checkbox" /> Word wrap</label><label class="check"><input id="alwaysOnTop" type="checkbox" /> Always on top</label><div class="dialog-actions"><button id="saveSettings" value="save" class="primary">Save settings</button></div></form></dialog>
+  <dialog id="autoexecDialog" aria-labelledby="autoexecTitle"><form id="autoexecForm"><div class="dialog-head"><h2 id="autoexecTitle">Save to autoexec</h2></div><label>Filename<input id="autoexecName" required maxlength="85" spellcheck="false" /></label><p class="dialog-note">Use a .lua or .luau filename. These scripts are stored locally and do not run automatically.</p><p id="autoexecError" role="alert"></p><div class="dialog-actions"><button id="cancelAutoexec" type="button">Cancel</button><button id="saveAutoexec" type="submit" class="primary">Save script</button></div></form></dialog>
 `;
 
 const $ = selector => document.querySelector(selector);
-const state = { tabs: [], active: null, view: 'files', workspace: '', settings: null, autoexec: [] };
+const state = { tabs: [], active: null, view: 'files', workspace: '', settings: null, closing: false };
 let editor;
+let draftRecovery;
+let allowClose = false;
+let sidebarRevision = 0;
+let autoexecSource = null;
+let savingAutoexec = false;
 
 function log(message, kind = 'info') {
   const row = document.createElement('div');
   row.className = `message ${kind}`;
-  row.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-  $('#messages').prepend(row);
+  const text = String(message);
+  row.textContent = `[${new Date().toLocaleTimeString()}] ${text.length > 65536 ? text.slice(0, 65536) + '\n[Output truncated in view]' : text}`;
+  const messages = $('#messages');
+  messages.prepend(row);
+  while (messages.childElementCount > 200) messages.lastElementChild.remove();
 }
 
 function showError(error) { log(error?.message || String(error), 'error'); }
@@ -72,18 +82,21 @@ function activate(id) {
   editor.setModel(tab.model);
   $('#statusLeft').textContent = tab.path || 'Unsaved script';
   renderTabs();
+  if (state.tabs.some(item => item.dirty)) draftRecovery?.schedule();
 }
 
-function addTab(path, content = '', name = 'Untitled.lua') {
-  const existing = state.tabs.find(tab => path && tab.path === path);
-  if (existing) return activate(existing.id);
-  const id = crypto.randomUUID();
+function addTab(path, content = '', name = 'Untitled.lua', options = {}) {
+  const samePath = value => window.ohm.platform === 'win32' ? value?.toLowerCase() : value;
+  const existing = state.tabs.find(tab => path && samePath(tab.path) === samePath(path));
+  if (existing) { activate(existing.id); return existing; }
+  const id = options.id || crypto.randomUUID();
   const model = monaco.editor.createModel(content, 'lua');
-  const tab = { id, name, path, model, dirty: false };
-  model.onDidChangeContent(() => { tab.dirty = true; renderTabs(); });
+  const tab = { id, name, path, model, dirty: options.dirty || false };
+  model.onDidChangeContent(() => { tab.dirty = true; renderTabs(); draftRecovery?.schedule(); });
   state.tabs.push(tab);
   activate(id);
   editor.focus();
+  return tab;
 }
 
 function closeTab(id) {
@@ -100,6 +113,7 @@ function closeTab(id) {
     if (next) activate(next.id);
     else { editor.setModel(null); $('#statusLeft').textContent = 'Ready'; renderTabs(); }
   } else renderTabs();
+  draftRecovery.schedule();
 }
 
 async function openFiles() {
@@ -122,6 +136,7 @@ async function saveActive() {
     log(`Saved ${titleOf(tab)}`);
     renderSidebar();
   } catch (error) { showError(error); }
+  finally { draftRecovery.schedule(); }
 }
 
 function treeNode(entry, depth = 0) {
@@ -136,18 +151,23 @@ function treeNode(entry, depth = 0) {
 }
 
 async function renderSidebar() {
-  const body = $('#sidebarBody');
-  body.replaceChildren();
+  const revision = ++sidebarRevision;
+  const view = state.view;
+  const body = document.createElement('div');
+  $('#sidebarBody').replaceChildren(emptyText('Loading…'));
   const heading = { files: 'EXPLORER', autoexec: 'AUTOEXEC', roblox: 'ROBLOX', about: 'ABOUT' };
-  $('#sidebarTitle').textContent = heading[state.view];
-  $('#sidebarAction').hidden = state.view === 'about';
+  $('#sidebarTitle').textContent = heading[view];
+  $('#sidebarAction').hidden = view === 'about';
   try {
-    if (state.view === 'files') {
+    if (view === 'files') {
       const controls = document.createElement('div');
       controls.className = 'side-actions';
       const change = document.createElement('button');
       change.textContent = 'Change workspace';
-      change.onclick = async () => { state.workspace = await window.ohm.chooseWorkspace(); renderSidebar(); };
+      change.onclick = async () => {
+        try { state.workspace = await window.ohm.chooseWorkspace(); renderSidebar(); }
+        catch (error) { showError(error); }
+      };
       controls.append(change);
       body.append(controls);
       const root = document.createElement('div');
@@ -158,26 +178,36 @@ async function renderSidebar() {
       const files = await window.ohm.listWorkspace();
       for (const entry of files) body.append(...treeNode(entry));
       if (!files.length) body.append(emptyText('This workspace has no scripts yet. Save one here to see it.'));
-    } else if (state.view === 'autoexec') {
+    } else if (view === 'autoexec') {
       const note = emptyText('Autoexec files are stored locally. Ohm does not run them automatically.');
       body.append(note);
       const add = document.createElement('button');
       add.className = 'side-primary';
       add.textContent = 'Save active script to autoexec';
-      add.onclick = async () => {
+      add.onclick = () => {
         const tab = state.tabs.find(item => item.id === state.active);
         if (!tab) return log('Open a script first', 'error');
-        const name = prompt('Autoexec filename (.lua)', titleOf(tab).replace(/\.[^.]+$/, '') + '.lua');
-        if (!name) return;
-        try { await window.ohm.saveAutoexec(name, tab.model.getValue()); log(`Saved autoexec/${name}`); renderSidebar(); }
-        catch (error) { showError(error); }
+        autoexecSource = tab.model.getValue();
+        $('#autoexecName').value = titleOf(tab).replace(/\.[^.]+$/, '') + '.lua';
+        $('#autoexecError').textContent = '';
+        $('#autoexecDialog').showModal();
+        $('#autoexecName').select();
       };
       body.append(add);
-      for (const name of await window.ohm.listAutoexec()) {
+      const names = await window.ohm.listAutoexec();
+      for (const name of names) {
         const row = document.createElement('div');
         row.className = 'autoexec-row';
-        const label = document.createElement('span');
+        const label = document.createElement('button');
+        label.className = 'autoexec-open';
         label.textContent = name;
+        label.title = `Open ${name}`;
+        label.onclick = async () => {
+          try {
+            const file = await window.ohm.readAutoexec(name);
+            addTab(file.path, file.content);
+          } catch (error) { showError(error); }
+        };
         const remove = document.createElement('button');
         remove.textContent = '×';
         remove.title = `Delete ${name}`;
@@ -189,7 +219,8 @@ async function renderSidebar() {
         row.append(label, remove);
         body.append(row);
       }
-    } else if (state.view === 'roblox') {
+      if (!names.length) body.append(emptyText('No autoexec scripts saved yet.'));
+    } else if (view === 'roblox') {
       const note = emptyText('Detected Roblox Player processes. Script execution needs a compatible bridge that is not included in this build.');
       body.append(note);
       const choose = document.createElement('button');
@@ -225,7 +256,11 @@ async function renderSidebar() {
       about.innerHTML = '<span class="about-mark">Ω</span><h2>Ohm</h2><p>An independent desktop Luau workspace.</p><p>Editor, files, themes, local autoexec storage, and Roblox process controls are available. Script injection, account services, and automatic updates are not implemented.</p>';
       body.append(about);
     }
-  } catch (error) { showError(error); }
+  } catch (error) {
+    body.append(emptyText('Could not load this view. Try Refresh.'));
+    if (revision === sidebarRevision) showError(error);
+  }
+  if (revision === sidebarRevision && view === state.view) $('#sidebarBody').replaceChildren(...body.childNodes);
 }
 
 function emptyText(value) {
@@ -233,6 +268,30 @@ function emptyText(value) {
   p.className = 'empty-text';
   p.textContent = value;
   return p;
+}
+
+async function prepareClose() {
+  if (state.closing) return;
+  state.closing = true;
+  $('.shell').inert = true;
+  for (const dialog of document.querySelectorAll('dialog')) dialog.inert = true;
+  editor.updateOptions({ readOnly: true });
+  try {
+    await draftRecovery.pause();
+    // A pending Save As must settle before choosing what work still needs recovery.
+    await Promise.allSettled(state.tabs.filter(tab => tab.saving).map(tab => tab.saving));
+    allowClose = await window.ohm.prepareClose(snapshotDrafts(state.tabs, state.active));
+    if (allowClose) window.close();
+  } catch (error) { showError(error); }
+  finally {
+    if (!allowClose) {
+      state.closing = false;
+      $('.shell').inert = false;
+      for (const dialog of document.querySelectorAll('dialog')) dialog.inert = false;
+      editor.updateOptions({ readOnly: false });
+      draftRecovery.resume();
+    }
+  }
 }
 
 function bind() {
@@ -264,6 +323,7 @@ function bind() {
     $('#fontSize').value = state.settings.fontSize;
     $('#wordWrap').checked = state.settings.wordWrap;
     $('#alwaysOnTop').checked = state.settings.alwaysOnTop;
+    $('#settingsDialog').returnValue = '';
     $('#settingsDialog').showModal();
   };
   $('#settingsDialog').addEventListener('close', async () => {
@@ -274,12 +334,35 @@ function bind() {
       log('Settings saved');
     } catch (error) { showError(error); }
   });
+  $('#cancelAutoexec').onclick = () => $('#autoexecDialog').close();
+  $('#autoexecDialog').addEventListener('close', () => { autoexecSource = null; });
+  $('#autoexecDialog').addEventListener('cancel', event => { if (savingAutoexec) event.preventDefault(); });
+  $('#autoexecForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (savingAutoexec || autoexecSource === null) return;
+    savingAutoexec = true;
+    $('#autoexecName').disabled = $('#saveAutoexec').disabled = $('#cancelAutoexec').disabled = true;
+    $('#autoexecError').textContent = '';
+    try {
+      const name = await window.ohm.saveAutoexec($('#autoexecName').value, autoexecSource);
+      if (name) {
+        $('#autoexecDialog').close();
+        log(`Saved autoexec/${name}`);
+        renderSidebar();
+      }
+    } catch (error) { $('#autoexecError').textContent = error.message || String(error); }
+    finally {
+      savingAutoexec = false;
+      $('#autoexecName').disabled = $('#saveAutoexec').disabled = $('#cancelAutoexec').disabled = false;
+    }
+  });
   window.addEventListener('beforeunload', event => {
-    if (!hasUnsavedWork(state.tabs)) return;
+    if (allowClose || (!hasUnsavedWork(state.tabs) && !draftRecovery.pending)) return;
     event.preventDefault();
     event.returnValue = false;
   });
   window.addEventListener('keydown', event => {
+    if (state.closing || document.querySelector('dialog[open]')) return;
     if (!(event.ctrlKey || event.metaKey)) return;
     const key = event.key.toLowerCase();
     if (key === 's') { event.preventDefault(); saveActive(); }
@@ -294,10 +377,27 @@ async function start() {
   state.settings = initial.settings;
   editor = monaco.editor.create($('#editor'), { language: 'lua', theme: 'vs-dark', automaticLayout: true, minimap: { enabled: true }, fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 14, scrollBeyondLastLine: false, padding: { top: 18 } });
   applySettings();
+  for (const draft of initial.recovery.drafts) addTab(null, draft.content, draft.name, { id: draft.id, dirty: true });
+  if (initial.recovery.activeId) activate(initial.recovery.activeId);
+  let reportedRecoveryError = false;
+  draftRecovery = createDraftRecovery({
+    snapshot: () => snapshotDrafts(state.tabs, state.active),
+    save: snapshot => window.ohm.saveRecovery(snapshot),
+    onSaved: () => { reportedRecoveryError = false; $('#recoveryStatus').textContent = state.tabs.some(tab => tab.dirty) ? 'Drafts saved locally' : ''; },
+    onError: error => {
+      $('#recoveryStatus').textContent = 'Draft recovery failed';
+      if (!reportedRecoveryError) showError(error);
+      reportedRecoveryError = true;
+    }
+  });
   bind();
+  window.ohm.onCloseRequested(prepareClose);
+  await window.ohm.rendererReady();
   renderTabs();
   renderSidebar();
   log('Ohm is ready. Local workspace loaded.');
+  if (initial.recovery.drafts.length) log('Recovered unsaved drafts. Save them to files when ready.');
+  if (initial.recoveryWarning) showError(initial.recoveryWarning);
 }
 
 start().catch(error => { showError(error); $('#statusLeft').textContent = 'Startup failed'; });
