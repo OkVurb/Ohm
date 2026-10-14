@@ -17,8 +17,9 @@ function cleanSettings(input, previous = defaults) {
 }
 
 function autoexecName(name) {
-  if (typeof name !== 'string' || !/^[a-zA-Z0-9 _.-]{1,80}\.lua$/i.test(name) || name.startsWith('.')) {
-    throw new TypeError('Use a .lua filename without folders');
+  if (typeof name !== 'string' || !/^[a-zA-Z0-9 _.-]{1,80}\.(lua|luau)$/i.test(name) || name.startsWith('.') ||
+      /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\s*\.|$)/i.test(name)) {
+    throw new TypeError('Use a .lua or .luau filename without folders or reserved Windows names');
   }
   return name;
 }
@@ -29,5 +30,3 @@ function inside(root, target) {
 }
 
 module.exports = { defaults, cleanSettings, autoexecName, inside };
-"module.exports = { injectDllToPid }" 
-"module.exports = { runOffline, injectDllToPid }" 

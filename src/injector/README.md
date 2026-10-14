@@ -1,15 +1,15 @@
-# Injector Integration
+# Unfinished injector prototype
 
-This module handles the Roblox DLL injection with bypass of Byfron/Hyperion anti-cheat.
-It integrates directly with Ohm's application framework and includes kernel-mode driver support.
+These files do not provide working live Roblox execution. They are not connected
+to the application or included as an execution backend in the packaged app.
 
-## Features
-- Selects running Roblox processes 
-- Supports multiple injection methods (kernel-mode driver, manual mapping)
-- Bypasses Hyperion's CFG protections
-- Multi-process injection capability
-- Comprehensive error handling
+- `injection.js` calls `window.ohm.injectRoblox` and `window.ohm.uninjectRoblox`,
+  neither of which exists in the preload bridge. Its `log` helper is also missing.
+- `electron/injector.cjs` does not exist. The separate `electron/nodeinject.js`
+  prototype references an absent `inject32.exe` and has no script execution API.
+- `driver/driver.h` contains declarations only. No driver implementation or build
+  project is present.
 
-## Files
-- `electron/injector.cjs` - Electron backend for injector operations
-- `src/injector/injection.js` - Frontend UI integration
+A live backend needs an implemented, documented connection and script execution
+interface, plus runtime verification. The local Luau runner remains a separate
+offline capability; renaming it does not connect it to Roblox.
