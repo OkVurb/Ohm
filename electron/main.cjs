@@ -20,6 +20,7 @@ let settings;
 let recovery;
 let recoveryPath;
 let recoveryError;
+let pendingRecovery = Promise.resolve();
 const approvedFiles = new Set();
 let pendingFileSave = Promise.resolve();
 let pendingSettings = Promise.resolve();
@@ -39,12 +40,21 @@ function updateSettings(patch) {
   return update;
 }
 
-async function saveRecovery(value) {
-  if (recoveryError) throw new Error(recoveryError);
+function saveRecovery(value) {
   const next = cleanRecovery(value);
-  await writeAtomic(recoveryPath, JSON.stringify(next));
-  recovery.session = next;
-  return true;
+  const save = pendingRecovery.catch(() => {}).then(async () => {
+    if (recoveryError) {
+      // Startup did not restore this file into the editor. Preserve even valid
+      // old drafts before allowing current buffers to replace the checkpoint.
+      recovery = await loadRecovery(recoveryPath, { preserveExisting: true });
+      recoveryError = null;
+    }
+    await writeAtomic(recoveryPath, JSON.stringify(next));
+    recovery.session = next;
+    return true;
+  });
+  pendingRecovery = save;
+  return save;
 }
 
 function fileOperation(operation) {

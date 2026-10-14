@@ -26,7 +26,7 @@ function cleanRecovery(value) {
   return result;
 }
 
-async function loadRecovery(file) {
+async function loadRecovery(file, { preserveExisting = false } = {}) {
   let info;
   try { info = await fs.lstat(file); }
   catch (error) {
@@ -41,10 +41,10 @@ async function loadRecovery(file) {
     try { session = cleanRecovery(JSON.parse(text)); }
     catch { invalid = true; }
   }
-  if (!invalid) return { session, warning: null };
-  const backup = `${file}.corrupt-${randomUUID()}`;
+  if (!invalid && !preserveExisting) return { session, warning: null };
+  const backup = `${file}.${invalid ? 'corrupt' : 'recovered'}-${randomUUID()}`;
   await fs.rename(file, backup);
-  return { session: emptyRecovery(), warning: `Unreadable drafts were preserved at ${backup}` };
+  return { session: emptyRecovery(), warning: `${invalid ? 'Unreadable' : 'Previous'} drafts were preserved at ${backup}` };
 }
 
 module.exports = { cleanRecovery, emptyRecovery, loadRecovery };

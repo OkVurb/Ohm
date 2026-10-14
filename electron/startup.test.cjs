@@ -9,6 +9,7 @@ const { createRequire } = require('node:module');
 async function bootApp(t, options = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ohm-startup-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await options.prepare?.(dir);
   const handlers = new Map();
   const events = new Map();
   const windowEvents = new Map();
@@ -55,6 +56,11 @@ async function bootApp(t, options = {}) {
   };
   const localRequire = createRequire(path.join(__dirname, 'main.cjs'));
   const config = localRequire('../package.json');
+  const recoveryModule = { exports: {} };
+  vm.runInNewContext(await fs.readFile(path.join(__dirname, 'recovery.cjs'), 'utf8'), {
+    require: name => name === 'node:fs/promises' ? { ...fs, ...options.recoveryFs } : localRequire(name),
+    module: recoveryModule, Buffer
+  });
   vm.runInNewContext(await fs.readFile(path.join(__dirname, 'main.cjs'), 'utf8'), {
     require(name) {
       if (name === 'electron') return electron;
@@ -63,6 +69,7 @@ async function bootApp(t, options = {}) {
         const resolved = localRequire.resolve(name);
         assert.ok(config.build.files.includes(`electron/${path.basename(resolved)}`), `${name} missing from package`);
       }
+      if (name === './recovery.cjs') return recoveryModule.exports;
       return localRequire(name);
     },
     __dirname, process, Buffer, console
@@ -244,3 +251,44 @@ test('legacy valid autoexec names remain listed, readable and deletable', async 
   }
   assert.equal((await app.invoke('list-autoexec')).length, 0);
 });
+
+for (const failure of ['read', 'corrupt backup', 'late valid backup']) {
+  test(`recovery resumes after startup ${failure} failure without losing old drafts`, async t => {
+    const old = { version: 1, drafts: [{ id: 'old', name: 'old.lua', content: 'previous session' }], activeId: 'old' };
+    const original = failure === 'corrupt backup' ? '{partial draft' : JSON.stringify(old);
+    let readable = failure === 'corrupt backup';
+    let writable = false;
+    const app = await bootApp(t, {
+      prepare: dir => fs.writeFile(path.join(dir, 'drafts.json'), original),
+      recoveryFs: {
+        async readFile(...args) {
+          if (!readable) throw new Error('temporary read failure');
+          return fs.readFile(...args);
+        },
+        async rename(...args) {
+          if (!writable) throw new Error('temporary backup failure');
+          return fs.rename(...args);
+        }
+      }
+    });
+    const initial = await app.invoke('init');
+    assert.match(initial.recoveryWarning, /unavailable/);
+    assert.equal(initial.recovery.drafts.length, 0);
+    if (failure === 'late valid backup') readable = true;
+    const current = { version: 1, drafts: [{ id: 'new', name: 'new.lua', content: 'current edits' }], activeId: 'new' };
+    await assert.rejects(app.invoke('save-recovery', current), /temporary/);
+    const file = path.join(app.dir, 'drafts.json');
+    assert.equal(await fs.readFile(file, 'utf8'), original);
+    readable = writable = true;
+    const latest = { ...current, drafts: [{ ...current.drafts[0], content: 'latest edits' }] };
+    await Promise.all([app.invoke('save-recovery', current), app.invoke('save-recovery', latest)]);
+    assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), latest);
+    const backups = (await fs.readdir(app.dir)).filter(name => /^drafts\.json\.(corrupt|recovered)-/.test(name));
+    assert.equal(backups.length, 1, 'Concurrent retries must preserve the old file only once');
+    assert.equal(await fs.readFile(path.join(app.dir, backups[0]), 'utf8'), original);
+    assert.match((await app.invoke('init')).recoveryWarning, /preserved at/);
+    app.respond(1);
+    assert.equal(await app.invoke('prepare-close', latest), true, 'Keep drafts and close works without restarting');
+    assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), latest);
+  });
+}
