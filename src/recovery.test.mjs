@@ -128,3 +128,19 @@ test('pausing cancels scheduled retries and failures settling during pause do no
   assert.equal(attempts, 2);
   assert.equal(recovery.pending, true);
 });
+
+test('successful retry forwards the backup location to the renderer callback', async t => {
+  let fail = true;
+  const notices = [];
+  const result = { success: true, warning: 'Previous drafts were preserved at C:/profile/drafts.json.recovered-backup' };
+  const recovery = createDraftRecovery({ delay: 10000, snapshot: () => ({}),
+    save: async () => { if (fail) throw new Error('disk unavailable'); return result; },
+    onSaved: value => notices.push(value)
+  });
+  t.after(() => recovery.pause());
+  recovery.schedule();
+  await assert.rejects(recovery.flush(), /disk unavailable/);
+  fail = false;
+  await recovery.flush();
+  assert.deepEqual(notices, [result]);
+});

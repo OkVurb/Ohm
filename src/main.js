@@ -387,10 +387,16 @@ async function start() {
   for (const draft of initial.recovery.drafts) addTab(null, draft.content, draft.name, { id: draft.id, dirty: true });
   if (initial.recovery.activeId) activate(initial.recovery.activeId);
   let reportedRecoveryError = false;
+  let reportedRecoveryWarning = initial.recoveryWarning;
   draftRecovery = createDraftRecovery({
     snapshot: () => snapshotDrafts(state.tabs, state.active),
     save: snapshot => window.ohm.saveRecovery(snapshot),
-    onSaved: () => { reportedRecoveryError = false; $('#recoveryStatus').textContent = state.tabs.some(tab => tab.dirty) ? 'Drafts saved locally' : ''; },
+    onSaved: result => {
+      if (result?.warning && result.warning !== reportedRecoveryWarning) {
+        showError(result.warning);
+        reportedRecoveryWarning = result.warning;
+      }
+      reportedRecoveryError = false; $('#recoveryStatus').textContent = state.tabs.some(tab => tab.dirty) ? 'Drafts saved locally' : ''; },
     onError: error => {
       $('#recoveryStatus').textContent = 'Draft recovery failed';
       if (!reportedRecoveryError) showError(error);

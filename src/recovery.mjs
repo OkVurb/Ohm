@@ -20,7 +20,7 @@ export function createDraftRecovery({ snapshot, save, onSaved = () => {}, onErro
     if (paused || !changed) return;
     changed = false;
     writing = Promise.resolve().then(() => save(snapshot()));
-    try { await writing; onSaved(); }
+    try { const result = await writing; onSaved(result); }
     catch (error) {
       changed = true;
       if (!paused && !timer) timer = setTimeout(() => flush().catch(onError), retryDelay);

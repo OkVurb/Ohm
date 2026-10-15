@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 
 async function bootApp(t, options = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ohm-startup-'));
+  const dir = options.dir || await fs.mkdtemp(path.join(os.tmpdir(), 'ohm-startup-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   await options.prepare?.(dir);
   const handlers = new Map();
@@ -290,5 +290,44 @@ for (const failure of ['read', 'corrupt backup', 'late valid backup']) {
     app.respond(1);
     assert.equal(await app.invoke('prepare-close', latest), true, 'Keep drafts and close works without restarting');
     assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), latest);
+  });
+}
+
+for (const closing of [false, true]) {
+  test(`preserved backup notice reaches renderer after ${closing ? 'closure and restart' : 'editing'}`, async t => {
+    const original = JSON.stringify({ version: 1, drafts: [{ id: 'old', name: 'old.lua', content: 'irreplaceable' }], activeId: 'old' });
+    let fail = true;
+    const app = await bootApp(t, {
+      prepare: dir => fs.writeFile(path.join(dir, 'drafts.json'), original),
+      recoveryFs: { async readFile(...args) {
+        if (fail) throw new Error('temporary read failure');
+        return fs.readFile(...args);
+      } }
+    });
+    assert.match((await app.invoke('init')).recoveryWarning, /unavailable/);
+    fail = false;
+    const snapshot = { version: 1, drafts: [{ id: 'new', name: 'new.lua', content: 'new edits' }], activeId: 'new' };
+    let result;
+    if (closing) {
+      app.respond(1);
+      assert.equal(await app.invoke('prepare-close', snapshot), true);
+    } else {
+      result = await app.invoke('save-recovery', snapshot);
+      assert.equal(result.success, true);
+    }
+    const backup = (await fs.readdir(app.dir)).find(name => name.startsWith('drafts.json.recovered-'));
+    assert.ok(backup);
+    const backupPath = path.join(app.dir, backup);
+    assert.equal(await fs.readFile(backupPath, 'utf8'), original);
+    if (!closing) assert.ok(result.warning.includes(backupPath));
+    const restarted = await bootApp(t, { dir: app.dir });
+    const initial = await restarted.invoke('init');
+    assert.ok(initial.recoveryWarning.includes(backupPath));
+    assert.equal(initial.recovery.drafts[0].content, 'new edits');
+    // Neither reading init nor another successful checkpoint consumes the notice.
+    await restarted.invoke('save-recovery', snapshot);
+    const again = await bootApp(t, { dir: app.dir });
+    assert.ok((await again.invoke('init')).recoveryWarning.includes(backupPath));
+    assert.equal(await fs.readFile(backupPath, 'utf8'), original);
   });
 }

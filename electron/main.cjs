@@ -8,6 +8,7 @@ const { defaults, cleanSettings, autoexecName, inside } = require('./core.cjs');
 const { runOffline } = require('./offline.cjs');
 const { writeAtomic } = require('./storage.cjs');
 const { cleanRecovery, emptyRecovery, loadRecovery } = require('./recovery.cjs');
+const { resetDrafts } = require('./resetDrafts.cjs');
 const inject = require('./injection.js');
 
 const exec = promisify(execFile);
@@ -44,14 +45,13 @@ function saveRecovery(value) {
   const next = cleanRecovery(value);
   const save = pendingRecovery.catch(() => {}).then(async () => {
     if (recoveryError) {
-      // Startup did not restore this file into the editor. Preserve even valid
-      // old drafts before allowing current buffers to replace the checkpoint.
+      // Preserve drafts that startup could not restore before replacing them.
       recovery = await loadRecovery(recoveryPath, { preserveExisting: true });
       recoveryError = null;
     }
     await writeAtomic(recoveryPath, JSON.stringify(next));
     recovery.session = next;
-    return true;
+    return { success: true, warning: recovery.warning };
   });
   pendingRecovery = save;
   return save;
@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
     pendingClose = (async () => {
       if (!snapshot || !Array.isArray(snapshot.drafts)) throw new TypeError('Invalid close request');
       await Promise.allSettled([pendingFileSave, pendingSettings]);
-      let next = emptyRecovery();
+      let next = resetDrafts();
       if (snapshot.drafts.length) {
         const { response } = await dialog.showMessageBox(win, {
           type: 'warning',
