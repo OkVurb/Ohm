@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const maxRecoveryBytes = 8 * 1024 * 1024;
@@ -27,10 +28,18 @@ function cleanRecovery(value) {
 }
 
 async function loadRecovery(file, { preserveExisting = false } = {}) {
+  // Backups are the durable notice: closing or crashing before display cannot
+  // consume it. Keep reporting their locations while the files remain on disk.
+  const entries = await fs.readdir(path.dirname(file), { withFileTypes: true });
+  const prefix = path.basename(file) + '.';
+  const backups = entries.filter(entry => entry.isFile() && entry.name.startsWith(prefix) &&
+    /^(corrupt|recovered)-[0-9a-f-]{36}$/.test(entry.name.slice(prefix.length)))
+    .map(entry => path.join(path.dirname(file), entry.name));
+  const warning = backups.length ? `Previous drafts were preserved at ${backups.join('\n')}` : null;
   let info;
   try { info = await fs.lstat(file); }
   catch (error) {
-    if (error.code === 'ENOENT') return { session: emptyRecovery(), warning: null };
+    if (error.code === 'ENOENT') return { session: emptyRecovery(), warning };
     throw error;
   }
   if (!info.isFile()) throw new Error('The recovery path is not a regular file');
@@ -41,10 +50,10 @@ async function loadRecovery(file, { preserveExisting = false } = {}) {
     try { session = cleanRecovery(JSON.parse(text)); }
     catch { invalid = true; }
   }
-  if (!invalid && !preserveExisting) return { session, warning: null };
+  if (!invalid && !preserveExisting) return { session, warning };
   const backup = `${file}.${invalid ? 'corrupt' : 'recovered'}-${randomUUID()}`;
   await fs.rename(file, backup);
-  return { session: emptyRecovery(), warning: `${invalid ? 'Unreadable' : 'Previous'} drafts were preserved at ${backup}` };
+  return { session: emptyRecovery(), warning: `${invalid ? 'Unreadable' : 'Previous'} drafts were preserved at ${backup}${warning ? `\n${warning}` : ''}` };
 }
 
 module.exports = { cleanRecovery, emptyRecovery, loadRecovery };
